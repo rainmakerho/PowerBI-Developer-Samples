@@ -15,6 +15,8 @@ namespace PowerBIEmbedded_AppOwnsData.Controllers
     using System.Threading.Tasks;
     using System.Web.Mvc;
     using Microsoft.Ajax.Utilities;
+    using System.Web;
+    using System.Collections.Concurrent;
 
     public class HomeController : Controller
     {
@@ -38,7 +40,7 @@ namespace PowerBIEmbedded_AppOwnsData.Controllers
             return View(result);
         }
 
-        public async Task<ActionResult> EmbedReport()
+        public async Task<ActionResult> EmbedReport(string reportId)
         {
             if (!m_errorMessage.IsNullOrWhiteSpace())
             {
@@ -47,8 +49,41 @@ namespace PowerBIEmbedded_AppOwnsData.Controllers
 
             try
             {
-                var embedResult = await EmbedService.GetEmbedParams(ConfigValidatorService.WorkspaceId, ConfigValidatorService.ReportId);
-                return View(embedResult);
+                if (string.IsNullOrWhiteSpace(reportId))
+                {
+                    reportId = ConfigValidatorService.ReportId.ToString();
+                }
+                //每次都取 Embed Config
+                //var newRptEmbedConfig = await EmbedService.GetEmbedParams(ConfigValidatorService.WorkspaceId, Guid.Parse(reportId));
+                //return View(newRptEmbedConfig);
+
+                //有過期才取
+                var rptEmbedConfigsName = "RptEmbedConfigs";
+                var rptEmbedConfigs = HttpContext.Application[rptEmbedConfigsName] as ConcurrentDictionary<string, ReportEmbedConfig>;
+                if (rptEmbedConfigs == null)
+                {
+                    int initialCapacity = 101;
+                    int numProcs = Environment.ProcessorCount;
+                    int concurrencyLevel = numProcs * 2;
+                    rptEmbedConfigs = new ConcurrentDictionary<string, ReportEmbedConfig>(concurrencyLevel, initialCapacity);
+                    HttpContext.Application.Lock();
+                    HttpContext.Application[rptEmbedConfigsName] = rptEmbedConfigs;
+                    HttpContext.Application.UnLock();
+                }
+
+                ReportEmbedConfig rptEmbedConfig = null;
+
+                if (rptEmbedConfigs.TryGetValue(reportId, out rptEmbedConfig))
+                {
+                    if (rptEmbedConfig.EmbedToken.Expiration > DateTime.UtcNow.AddMinutes(5))
+                    {
+                        return View(rptEmbedConfig);
+                    }
+                }
+
+                var newRptEmbedConfig = await EmbedService.GetEmbedParams(ConfigValidatorService.WorkspaceId, Guid.Parse(reportId));
+                rptEmbedConfigs.TryAdd(reportId, newRptEmbedConfig);
+                return View(newRptEmbedConfig);
             }
             catch (HttpOperationException exc)
             {

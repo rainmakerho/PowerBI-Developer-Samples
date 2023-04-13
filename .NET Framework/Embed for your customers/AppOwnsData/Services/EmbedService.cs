@@ -19,10 +19,11 @@ namespace AppOwnsData.Services
     public static class EmbedService
     {
         private static readonly string powerBiApiUrl = ConfigurationManager.AppSettings["powerBiApiUrl"];
-
+        private static TokenCredentials _token;
         public static async Task<PowerBIClient> GetPowerBiClient()
         {
             var tokenCredentials = new TokenCredentials(await AadService.GetAccessToken(), "Bearer");
+            _token = tokenCredentials;
             return new PowerBIClient(new Uri(powerBiApiUrl), tokenCredentials);
         }
 
@@ -65,7 +66,9 @@ namespace AppOwnsData.Services
                     }
 
                     // Get Embed token multiple resources
-                    embedToken = await GetEmbedToken(reportId, datasetIds, workspaceId);
+                    //embedToken = await GetEmbedToken(reportId, datasetIds, workspaceId);
+                    // 改用已產生的 pbiClient
+                    embedToken = GetEmbedToken(pbiClient, reportId, datasetIds, workspaceId);
                 }
 
                 // Add report data for embedding
@@ -146,22 +149,26 @@ namespace AppOwnsData.Services
         {
             using (var pbiClient = await GetPowerBiClient())
             {
-                // Create a request for getting Embed token 
-                // This method works only with new Power BI V2 workspace experience
-                var tokenRequest = new GenerateTokenRequestV2(
-
-                reports: new List<GenerateTokenRequestV2Report>() { new GenerateTokenRequestV2Report(reportId) },
-
-                datasets: datasetIds.Select(datasetId => new GenerateTokenRequestV2Dataset(datasetId.ToString())).ToList(),
-
-                targetWorkspaces: targetWorkspaceId != Guid.Empty ? new List<GenerateTokenRequestV2TargetWorkspace>() { new GenerateTokenRequestV2TargetWorkspace(targetWorkspaceId) } : null
-                );
-
-                // Generate Embed token
-                var embedToken = pbiClient.EmbedToken.GenerateToken(tokenRequest);
-
-                return embedToken;
+                return GetEmbedToken(pbiClient, reportId, datasetIds, targetWorkspaceId);
             }
+        }
+
+        public static EmbedToken GetEmbedToken(PowerBIClient pbiClient, Guid reportId, IList<Guid> datasetIds, [Optional] Guid targetWorkspaceId)
+        {
+            // Create a request for getting Embed token 
+            // This method works only with new Power BI V2 workspace experience
+            var tokenRequest = new GenerateTokenRequestV2(
+
+            reports: new List<GenerateTokenRequestV2Report>() { new GenerateTokenRequestV2Report(reportId) },
+
+            datasets: datasetIds.Select(datasetId => new GenerateTokenRequestV2Dataset(datasetId.ToString())).ToList(),
+
+            targetWorkspaces: targetWorkspaceId != Guid.Empty ? new List<GenerateTokenRequestV2TargetWorkspace>() { new GenerateTokenRequestV2TargetWorkspace(targetWorkspaceId) } : null
+            );
+
+            // Generate Embed token
+            var embedToken = pbiClient.EmbedToken.GenerateToken(tokenRequest);
+            return embedToken;
         }
 
         /// <summary>
